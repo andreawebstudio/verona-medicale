@@ -69,8 +69,12 @@
     var rail = tlWrap.querySelector('.tl-rail');
     var steps = Array.prototype.slice.call(tlWrap.querySelectorAll('.timeline li'));
     var nums = steps.map(function (li) { return li.querySelector('.step-num'); });
-    var tlTicking = false;
+    var tlRunning = false;
     var vertical = false;
+    var railLength = 1;
+    var stepRadius = 48;
+    var current = null;
+    var clamp = function (v, min, max) { return Math.max(min, Math.min(max, v)); };
 
     var centerOf = function (el) {
       var r = el.getBoundingClientRect();
@@ -82,6 +86,9 @@
       var a = centerOf(nums[0]);
       var b = centerOf(nums[nums.length - 1]);
       vertical = Math.abs(b.y - a.y) > Math.abs(b.x - a.x);
+      railLength = vertical ? b.y - a.y : b.x - a.x;
+      stepRadius = nums[0].offsetWidth / 2 + 10;
+      tlWrap.style.setProperty('--rail', railLength + 'px');
       tlWrap.classList.toggle('is-vertical', vertical);
       if (vertical) {
         rail.style.cssText = 'left:' + (a.x - w.left) + 'px;top:' + (a.y - w.top) + 'px;height:' + (b.y - a.y) + 'px;width:1px';
@@ -90,32 +97,57 @@
       }
     };
 
-    var paint = function () {
-      tlTicking = false;
+    /* Posizione della luce lungo la linea: oltre 0 e 1 entra e esce dai cerchi */
+    var targetProgress = function () {
+      var margin = stepRadius / railLength;
       var vh = window.innerHeight;
-      var p;
-      if (reducedMotion) {
-        p = 1;
-      } else if (vertical) {
+      if (reducedMotion) return 1 + margin;
+      if (vertical) {
         var a = centerOf(nums[0]).y;
         var b = centerOf(nums[nums.length - 1]).y;
-        p = (vh * 0.68 - a) / (b - a);
-      } else {
-        p = (vh * 0.82 - tlWrap.getBoundingClientRect().top) / (vh * 0.42);
+        return clamp((vh * 0.68 - a) / (b - a), -margin, 1 + margin);
       }
-      p = Math.max(0, Math.min(1, p));
-      tlWrap.style.setProperty('--p', p.toFixed(4));
+      var t = clamp((vh * 0.82 - tlWrap.getBoundingClientRect().top) / (vh * 0.42), 0, 1);
+      return -margin + t * (1 + 2 * margin);
+    };
+
+    var render = function () {
+      var spacing = railLength / (steps.length - 1);
+      var x = current * railLength;
+      var railX = clamp(x, 0, railLength);
       var last = -1;
+      tlWrap.style.setProperty('--p', clamp(current, 0, 1).toFixed(4));
       steps.forEach(function (li, i) {
-        var lit = p >= i / (steps.length - 1) - 0.002 && p > 0;
+        var stepX = i * spacing;
+        var fill = clamp((x - stepX + stepRadius) / (2 * stepRadius), 0, 1);
+        var glow = reducedMotion ? 0 : clamp(1 - Math.abs(railX - stepX) / (spacing * 0.55), 0, 1);
+        nums[i].style.setProperty('--f', fill.toFixed(3));
+        nums[i].style.setProperty('--g', glow.toFixed(3));
+        var lit = fill >= 0.5;
         li.classList.toggle('is-lit', lit);
         if (lit) last = i;
       });
       steps.forEach(function (li, i) { li.classList.toggle('is-current', i === last && !reducedMotion); });
     };
 
+    /* La luce insegue lo scorrimento con una leggera inerzia */
+    var tick = function () {
+      var target = targetProgress();
+      if (current === null || reducedMotion) current = target;
+      current += (target - current) * 0.16;
+      var settled = Math.abs(target - current) < 0.0006;
+      if (settled) current = target;
+      render();
+      if (settled) { tlRunning = false; } else { window.requestAnimationFrame(tick); }
+    };
+
+    var paint = function () {
+      current = targetProgress();
+      render();
+    };
+
     var requestPaint = function () {
-      if (!tlTicking) { tlTicking = true; window.requestAnimationFrame(paint); }
+      if (!tlRunning) { tlRunning = true; window.requestAnimationFrame(tick); }
     };
 
     measureRail();
